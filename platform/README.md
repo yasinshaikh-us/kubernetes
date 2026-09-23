@@ -5,6 +5,7 @@ Components deployed onto a small Civo k3s sandbox (3 × `g4s.kube.small`, 1 vCPU
 | Folder | Component | How it's installed | What gets tested |
 |---|---|---|---|
 | `cluster/` | Civo k3s cluster | Civo API (`create-cluster.sh`) | Nodes Ready |
+| `metrics-server/` | metrics-server 3.14.0 | Helm | `kubectl top nodes` works (Headlamp CPU/memory graphs) |
 | `istio/` | Istio 1.30.5: base, istiod, ingress gateway | Helm + `gateway.yaml` | istiod ready, gateway gets a public LoadBalancer IP, sidecar injection |
 | `cert-manager/` | cert-manager v1.21.2 + issuers (Let's Encrypt prod/staging, self-signed) | Helm + manifests | Let's Encrypt cert issued via HTTP-01 through the Istio gateway |
 | `nginx/` | nginx (2 replicas, in the mesh) | Plain manifests | `http://` and `https://nginx.<ip>.nip.io` |

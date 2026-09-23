@@ -1,5 +1,9 @@
 config:
   inCluster: true
+# The chart's own binding gives Headlamp's pod SA cluster-admin and is named headlamp-admin,
+# which clashes with admin-sa.yaml. Users log in with their own token, so the pod SA needs no rights.
+clusterRoleBinding:
+  create: false
 resources:
   requests: { cpu: 10m, memory: 64Mi }
   limits: { memory: 256Mi }
