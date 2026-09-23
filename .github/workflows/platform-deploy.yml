@@ -1,0 +1,69 @@
+name: Platform deploy
+
+# Creates (or reuses) a small Civo cluster, deploys platform/ (Istio, cert-manager, nginx, Headlamp)
+# and runs the smoke tests. The nightly cleanup workflow deletes the cluster.
+on:
+  workflow_dispatch:
+    inputs:
+      issuer:
+        description: "cert-manager ClusterIssuer for the gateway certificate"
+        type: choice
+        options: [letsencrypt-prod, letsencrypt-staging, selfsigned]
+        default: letsencrypt-prod
+      age_recipient:
+        description: "Optional age public key (age1...). If set, the Headlamp token is printed encrypted to it."
+        type: string
+        required: false
+  pull_request:
+    paths:
+      - platform/**
+      - .github/workflows/platform-deploy.yml
+
+concurrency:
+  group: platform-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CIVO_TOKEN: ${{ secrets.CIVO_TOKEN }}
+      KUBECONFIG: ${{ github.workspace }}/kubeconfig
+      KUBECONFIG_OUT: ${{ github.workspace }}/kubeconfig
+      ISSUER: ${{ inputs.issuer || 'letsencrypt-prod' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+
+      - name: Create or reuse cluster
+        run: platform/cluster/create-cluster.sh
+
+      - name: Deploy stack
+        run: platform/deploy.sh
+
+      - name: Smoke tests
+        run: platform/test.sh
+
+      - name: Cluster state
+        if: always()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get pods -A -o wide || true
+          kubectl get svc -A | grep -i loadbalancer || true
+          kubectl get certificate,certificaterequest,challenge -A || true
+          kubectl top nodes || true
+
+      - name: Encrypted Headlamp token
+        if: inputs.age_recipient != ''
+        env:
+          RECIPIENT: ${{ inputs.age_recipient }}
+        run: |
+          sudo apt-get install -y -qq age >/dev/null
+          token=$(kubectl -n headlamp get secret headlamp-admin-token -o jsonpath='{.data.token}' | base64 -d)
+          echo "::add-mask::$token"
+          echo "Decrypt with: age -d -i <identity-file>"
+          printf '%s' "$token" | age -r "$RECIPIENT" -a

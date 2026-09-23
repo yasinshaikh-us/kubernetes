@@ -1,0 +1,18 @@
+# Trimmed for 1 vCPU / 2 GB nodes. The chart defaults ask for 500m CPU / 2Gi memory.
+pilot:
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 512Mi }
+global:
+  proxy:
+    resources:
+      requests: { cpu: 10m, memory: 40Mi }
+      limits: { memory: 128Mi }
+meshConfig:
+  # Allows cert-manager's HTTP-01 solver Ingress (class "istio") to route through the gateway.
+  ingressControllerMode: DEFAULT
+  ingressClass: istio
+  ingressService: istio-ingressgateway
+  ingressSelector: ingressgateway

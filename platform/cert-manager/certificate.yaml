@@ -1,0 +1,14 @@
+# TLS certificate for the public gateway. It lives in istio-system because the gateway reads it from there.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: public-tls
+  namespace: istio-system
+spec:
+  secretName: public-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: ${ISSUER}
+  dnsNames:
+    - nginx.${DOMAIN}
+    - headlamp.${DOMAIN}

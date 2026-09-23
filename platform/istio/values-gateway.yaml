@@ -1,0 +1,10 @@
+# Installed as release "istio-ingressgateway" in istio-system, so its pods get the label istio=ingressgateway.
+# Service type LoadBalancer makes Civo provision a public load balancer.
+service:
+  type: LoadBalancer
+autoscaling:
+  enabled: false
+replicaCount: 1
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 256Mi }

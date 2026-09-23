@@ -1,0 +1,34 @@
+# HTTP-01 challenges are served through the Istio ingress gateway (Ingress class "istio").
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-prod-account }
+    solvers:
+      - http01:
+          ingress:
+            class: istio
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-staging-account }
+    solvers:
+      - http01:
+          ingress:
+            class: istio
+---
+# Fallback when Let's Encrypt is unreachable or rate-limited.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
