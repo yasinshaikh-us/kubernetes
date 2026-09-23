@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Deploys the platform stack onto the cluster in $KUBECONFIG:
 #   metrics-server -> Istio (with a public LoadBalancer gateway) -> cert-manager -> nginx -> Headlamp
-# Apps are exposed at https://<app>.<lb-ip>.nip.io
+# Apps are exposed at https://<app>.$DOMAIN (default: <lb-ip>.nip.io).
+#
+# Optional:
+#   DOMAIN=k8s.example.com   use your own domain; needs a wildcard A record *.k8s.example.com -> LB IP
+#   RESERVED_IP=1.2.3.4      pin the load balancer to a Civo reserved IP so the DNS record survives rebuilds
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,12 +27,24 @@ helm upgrade --install metrics-server metrics-server/metrics-server -n kube-syst
 echo "==> Istio"
 helm upgrade --install istio-base istio/base -n istio-system --create-namespace --version $ISTIO_VERSION --wait
 helm upgrade --install istiod istio/istiod -n istio-system --version $ISTIO_VERSION -f istio/values-istiod.yaml --wait
-helm upgrade --install istio-ingressgateway istio/gateway -n istio-system --version $ISTIO_VERSION -f istio/values-gateway.yaml --wait
+gateway_args=()
+if [ -n "${RESERVED_IP:-}" ]; then
+  gateway_args+=(--set-string "service.annotations.kubernetes\.civo\.com/ipv4-address=$RESERVED_IP")
+fi
+helm upgrade --install istio-ingressgateway istio/gateway -n istio-system --version $ISTIO_VERSION -f istio/values-gateway.yaml "${gateway_args[@]}" --wait
 
 echo "==> Waiting for load balancer IP"
 until LB_IP=$(kubectl -n istio-system get svc istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}') && [ -n "$LB_IP" ]; do sleep 5; done
-export DOMAIN="$LB_IP.nip.io" ISSUER
+export DOMAIN="${DOMAIN:-$LB_IP.nip.io}" ISSUER
 echo "    $LB_IP -> *.$DOMAIN"
+# Let's Encrypt HTTP-01 fails unless the hostnames resolve to the gateway.
+for host in nginx headlamp; do
+  resolved=$(getent ahostsv4 "$host.$DOMAIN" | awk 'NR==1{print $1}')
+  if [ "$resolved" != "$LB_IP" ]; then
+    echo "ERROR: $host.$DOMAIN resolves to '${resolved:-nothing}', expected $LB_IP. Point *.$DOMAIN at $LB_IP." >&2
+    exit 1
+  fi
+done
 
 echo "==> cert-manager"
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version $CERT_MANAGER_VERSION -f cert-manager/values.yaml --wait

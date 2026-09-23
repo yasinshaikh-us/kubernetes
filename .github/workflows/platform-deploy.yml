@@ -10,6 +10,10 @@ on:
         type: choice
         options: [letsencrypt-prod, letsencrypt-staging, selfsigned]
         default: letsencrypt-prod
+      domain:
+        description: "Optional domain (default: repo variable PLATFORM_DOMAIN, else <lb-ip>.nip.io)"
+        type: string
+        required: false
       age_recipient:
         description: "Optional age public key (age1...). If set, the Headlamp token is printed encrypted to it."
         type: string
@@ -35,6 +39,8 @@ jobs:
       KUBECONFIG: ${{ github.workspace }}/kubeconfig
       KUBECONFIG_OUT: ${{ github.workspace }}/kubeconfig
       ISSUER: ${{ inputs.issuer || 'letsencrypt-prod' }}
+      DOMAIN: ${{ inputs.domain || vars.PLATFORM_DOMAIN }}
+      RESERVED_IP: ${{ vars.CIVO_RESERVED_IP }}
     steps:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v4
