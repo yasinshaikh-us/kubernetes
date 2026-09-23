@@ -23,6 +23,16 @@ Internet -> Civo LoadBalancer -> istio-ingressgateway (Gateway "public", TLS fro
 
 `nip.io` resolves `<anything>.<ip>.nip.io` to `<ip>`, so no DNS setup is needed.
 
+## Using your own domain
+
+Some networks block `nip.io`. To use a domain you control instead:
+
+1. Reserve an IP in Civo (Networking → Reserved IPs, same region as the cluster). Save it as the repo variable `CIVO_RESERVED_IP`. The load balancer is pinned to that IP, so it stays the same when the nightly cleanup rebuilds the cluster.
+2. Create a DNS record `*.k8s.example.com  A  <reserved ip>`.
+3. Save `k8s.example.com` as the repo variable `PLATFORM_DOMAIN`, or pass it as the `domain` input when you run the workflow.
+
+Before requesting certificates, `deploy.sh` checks that the hostnames resolve to the load balancer. If they don't, it stops with an error.
+
 ## Run it
 
 Use the **Platform deploy** GitHub Action (Actions tab → Run workflow). It creates the `sandbox` cluster, or reuses it if it exists, then deploys and tests. PRs that touch `platform/` run the same deploy and tests.
@@ -32,7 +42,7 @@ To run it from your machine instead:
 ```sh
 export CIVO_TOKEN=...
 platform/cluster/create-cluster.sh && export KUBECONFIG=$PWD/kubeconfig
-platform/deploy.sh      # ISSUER=selfsigned if Let's Encrypt is rate-limited
+platform/deploy.sh      # optional: DOMAIN=..., RESERVED_IP=..., ISSUER=selfsigned
 platform/test.sh
 ```
 

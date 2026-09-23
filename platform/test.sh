@@ -3,7 +3,7 @@
 set -uo pipefail
 
 LB_IP=$(kubectl -n istio-system get svc istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-DOMAIN="$LB_IP.nip.io"
+DOMAIN="${DOMAIN:-$LB_IP.nip.io}"
 fail=0
 check() { # name, command...
   local name=$1; shift
