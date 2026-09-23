@@ -1,0 +1,17 @@
+# Shared ingress gateway. ${DOMAIN} is replaced by deploy.sh with <lb-ip>.nip.io.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port: { number: 80, name: http, protocol: HTTP }
+      hosts: ["*.${DOMAIN}"]
+    - port: { number: 443, name: https, protocol: HTTPS }
+      hosts: ["*.${DOMAIN}"]
+      tls:
+        mode: SIMPLE
+        credentialName: public-tls   # Secret issued by cert-manager (cert-manager/certificate.yaml)

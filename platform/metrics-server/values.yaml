@@ -1,0 +1,6 @@
+# Civo k3s ships without metrics-server. It powers `kubectl top` and Headlamp's CPU/memory graphs.
+args:
+  - --kubelet-insecure-tls   # k3s kubelet serving certs are self-signed
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 128Mi }
