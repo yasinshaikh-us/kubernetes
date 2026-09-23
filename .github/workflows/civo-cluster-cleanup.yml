@@ -1,0 +1,98 @@
+name: Civo cluster cleanup
+
+# Deletes every Kubernetes cluster in every Civo region.
+# Scheduled for 1:00 AM America/Los_Angeles. Cron is UTC, so both the PDT (08:00 UTC)
+# and PST (09:00 UTC) slots are scheduled and the job only proceeds in the one that
+# is actually 1 AM local time.
+on:
+  schedule:
+    - cron: "0 8 * * *"
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List clusters only, do not delete"
+        type: boolean
+        default: false
+  # PRs touching this workflow run in dry-run mode (list only) to validate it.
+  pull_request:
+    paths:
+      - .github/workflows/civo-cluster-cleanup.yml
+
+concurrency:
+  group: civo-cluster-cleanup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CIVO_TOKEN: ${{ secrets.CIVO_TOKEN }}
+      API: https://api.civo.com/v2
+      DRY_RUN: ${{ github.event_name == 'pull_request' || inputs.dry_run == true }}
+    steps:
+      - name: Check local time
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/Los_Angeles date +%H)" != "01" ]; then
+            echo "Not 1 AM in Seattle (DST slot mismatch); skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Delete all Kubernetes clusters
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${CIVO_TOKEN:-}" ]; then
+            echo "::error::CIVO_TOKEN secret is not set"; exit 1
+          fi
+
+          api() {
+            curl -sS --fail-with-body --retry 3 -H "Authorization: Bearer $CIVO_TOKEN" "$@"
+          }
+
+          regions=$(api "$API/regions" | jq -r '.[] | select(.features.kubernetes) | .code')
+          echo "Regions: $(echo $regions)"
+
+          found=0; failed=0
+          for region in $regions; do
+            page=1
+            while :; do
+              resp=$(api "$API/kubernetes/clusters?region=$region&page=$page&per_page=100")
+              ids+=$'\n'$(echo "$resp" | jq -r --arg r "$region" '.items[]? | "\($r) \(.id) \(.name) \(.status)"')
+              pages=$(echo "$resp" | jq -r '.pages // 1')
+              [ "$page" -ge "$pages" ] && break
+              page=$((page + 1))
+            done
+          done
+
+          while read -r region id name status; do
+            [ -z "${id:-}" ] && continue
+            found=$((found + 1))
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would delete $name ($id) in $region [status: $status]"
+              continue
+            fi
+            echo "Deleting $name ($id) in $region [status: $status]"
+            if out=$(api -X DELETE "$API/kubernetes/clusters/$id?region=$region"); then
+              echo "  -> $out"
+            else
+              echo "::warning::Failed to delete $name ($id) in $region: $out"
+              failed=$((failed + 1))
+            fi
+          done <<< "${ids:-}"
+
+          echo "Clusters found: $found, failed deletions: $failed"
+          {
+            echo "### Civo cluster cleanup"
+            echo "- Dry run: $DRY_RUN"
+            echo "- Clusters found: $found"
+            echo "- Failed deletions: $failed"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$failed" -eq 0 ]
