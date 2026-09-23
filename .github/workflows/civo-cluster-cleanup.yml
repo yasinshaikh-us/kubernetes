@@ -1,6 +1,6 @@
 name: Civo cluster cleanup
 
-# Deletes every Kubernetes cluster in every Civo region.
+# Deletes every Kubernetes cluster in every Civo region, plus orphaned cluster firewalls.
 # Scheduled for 1:00 AM America/Los_Angeles. Cron is UTC, so both the PDT (08:00 UTC)
 # and PST (09:00 UTC) slots are scheduled and the job only proceeds in the one that
 # is actually 1 AM local time.
@@ -88,11 +88,31 @@ jobs:
             fi
           done <<< "${ids:-}"
 
-          echo "Clusters found: $found, failed deletions: $failed"
+          # Civo leaves each cluster's auto-created firewall behind. Remove unused ones
+          # (clusters deleted in this run release theirs a few minutes later; the next run gets those).
+          fw_deleted=0
+          for region in $regions; do
+            while read -r fw_id fw_name; do
+              [ -z "${fw_id:-}" ] && continue
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "[dry-run] would delete orphaned firewall $fw_name in $region"
+              elif api -X DELETE "$API/firewalls/$fw_id?region=$region" >/dev/null; then
+                echo "Deleted orphaned firewall $fw_name in $region"
+                fw_deleted=$((fw_deleted + 1))
+              else
+                echo "::warning::Failed to delete firewall $fw_name in $region"
+              fi
+            done < <(api "$API/firewalls?region=$region" | jq -r '.[]
+              | select((.name | startswith("k3s-cluster-")) and .cluster_count == 0 and .instance_count == 0)
+              | "\(.id) \(.name)"')
+          done
+
+          echo "Clusters found: $found, failed deletions: $failed, orphaned firewalls deleted: $fw_deleted"
           {
             echo "### Civo cluster cleanup"
             echo "- Dry run: $DRY_RUN"
             echo "- Clusters found: $found"
             echo "- Failed deletions: $failed"
+            echo "- Orphaned firewalls deleted: $fw_deleted"
           } >> "$GITHUB_STEP_SUMMARY"
           [ "$failed" -eq 0 ]
