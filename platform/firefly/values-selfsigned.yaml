@@ -8,14 +8,10 @@ deployment:
         enabled: true
         csr:
           commonName: firefly-dev-ca
+    # Dev mode policies may not restrict subject or SANs; the Venafi-hosted policy should.
     policies:
       - name: istio-mesh
         validityPeriod: P1D
-        subject:
-          commonName: { type: OPTIONAL, allowedValues: [".*"], defaultValues: [], minOccurrences: 0, maxOccurrences: 1 }
-        sans:
-          dnsNames: { type: OPTIONAL, allowedValues: [".*"], defaultValues: [], minOccurrences: 0, maxOccurrences: 20 }
-          uniformResourceIdentifiers: { type: OPTIONAL, allowedValues: ["spiffe://cluster\\.local/.*"], defaultValues: [], minOccurrences: 0, maxOccurrences: 5 }
         keyUsages: [digitalSignature, keyEncipherment]
         extendedKeyUsages: [SERVER_AUTH, CLIENT_AUTH]
         keyAlgorithm:
