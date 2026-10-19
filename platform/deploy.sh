@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Deploys the platform stack onto the cluster in $KUBECONFIG:
-#   metrics-server -> Istio (with a public LoadBalancer gateway) -> cert-manager -> nginx -> Headlamp
+#   metrics-server -> cert-manager -> trust-manager -> Firefly -> istio-csr -> Istio (public gateway)
+#   -> test workloads -> nginx -> Headlamp
+# Mesh certificates: istio-agent -> istio-csr -> cert-manager CertificateRequest -> Firefly signs.
 # Apps are exposed at https://<app>.$DOMAIN (default: <lb-ip>.nip.io).
 #
 # Optional:
 #   DOMAIN=k8s.example.com   use your own domain; needs a wildcard A record *.k8s.example.com -> LB IP
 #   RESERVED_IP=1.2.3.4      pin the load balancer to a Civo reserved IP so the DNS record survives rebuilds
+#   VENAFI_CLIENT_ID=...     Firefly service account from Venafi / CyberArk Certificate Manager SaaS, plus
+#   VENAFI_PRIVATE_KEY=...   its PEM private key. Without both, Firefly runs in self-signed dev mode.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,6 +18,9 @@ ISTIO_VERSION=1.30.5
 CERT_MANAGER_VERSION=v1.21.2
 HEADLAMP_VERSION=0.45.0
 METRICS_SERVER_VERSION=3.14.0
+TRUST_MANAGER_VERSION=v0.25.0
+ISTIO_CSR_VERSION=v0.18.0
+FIREFLY_VERSION=v1.12.0
 
 helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null
 helm repo add jetstack https://charts.jetstack.io >/dev/null
@@ -24,8 +31,36 @@ helm repo update >/dev/null
 echo "==> metrics-server"
 helm upgrade --install metrics-server metrics-server/metrics-server -n kube-system --version $METRICS_SERVER_VERSION -f metrics-server/values.yaml --wait
 
-echo "==> Istio"
+echo "==> cert-manager"
+helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version $CERT_MANAGER_VERSION -f cert-manager/values.yaml --wait
+
+echo "==> trust-manager"
+helm upgrade --install trust-manager jetstack/trust-manager -n cert-manager --version $TRUST_MANAGER_VERSION -f trust-manager/values.yaml --wait
+
+echo "==> Firefly"
+kubectl create namespace venafi --dry-run=client -o yaml | kubectl apply -f -
+firefly_args=(-f firefly/values.yaml)
+if [ -n "${VENAFI_CLIENT_ID:-}" ] && [ -n "${VENAFI_PRIVATE_KEY:-}" ]; then
+  echo "    bootstrap: Venafi Certificate Manager SaaS"
+  kubectl -n venafi create secret generic venafi-credentials --from-literal=svc-acct.key="$VENAFI_PRIVATE_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  firefly_args+=(-f firefly/values-venafi.yaml --set-string "deployment.config.bootstrap.vaas.clientID=$VENAFI_CLIENT_ID")
+else
+  echo "    bootstrap: self-signed dev mode (set VENAFI_CLIENT_ID and VENAFI_PRIVATE_KEY to use Venafi)"
+  firefly_args+=(-f firefly/values-selfsigned.yaml)
+fi
+helm upgrade --install firefly oci://registry.venafi.cloud/public/venafi-images/helm/firefly -n venafi --version $FIREFLY_VERSION "${firefly_args[@]}" --wait
+kubectl apply -f firefly/ca-probe.yaml
+kubectl -n cert-manager wait certificate/firefly-ca --for=condition=Ready --timeout=120s
+kubectl apply -f trust-manager/bundle.yaml
+until kubectl -n cert-manager get configmap workload-trust-bundle >/dev/null 2>&1; do sleep 2; done
+
+echo "==> istio-csr"
+# istio-csr needs the istio-system namespace and must be serving before istiod starts.
 helm upgrade --install istio-base istio/base -n istio-system --create-namespace --version $ISTIO_VERSION --wait
+helm upgrade --install cert-manager-istio-csr jetstack/cert-manager-istio-csr -n cert-manager --version $ISTIO_CSR_VERSION -f istio-csr/values.yaml --wait
+
+echo "==> Istio"
 helm upgrade --install istiod istio/istiod -n istio-system --version $ISTIO_VERSION -f istio/values-istiod.yaml --wait
 gateway_args=()
 if [ -n "${RESERVED_IP:-}" ]; then
@@ -46,11 +81,14 @@ for host in nginx headlamp; do
   fi
 done
 
-echo "==> cert-manager"
-helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version $CERT_MANAGER_VERSION -f cert-manager/values.yaml --wait
 kubectl apply -f cert-manager/cluster-issuers.yaml
 envsubst < cert-manager/certificate.yaml | kubectl apply -f -
 envsubst < istio/gateway.yaml | kubectl apply -f -
+
+echo "==> Test workloads"
+kubectl apply -f workloads/workloads.yaml
+kubectl -n workloads rollout status deploy/httpbin --timeout=180s
+kubectl -n workspaces rollout status deploy/workspace --timeout=180s
 
 echo "==> nginx"
 envsubst < nginx/nginx.yaml | kubectl apply -f -

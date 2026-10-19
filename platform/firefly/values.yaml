@@ -1,0 +1,21 @@
+# CyberArk Workload Identity Manager (Firefly). Runs as a cert-manager external issuer:
+# it signs CertificateRequests whose issuerRef.group is firefly.venafi.com.
+acceptTerms: true
+deployment:
+  replicaCount: 1
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+  config:
+    controller:
+      enabled: true
+      certManager:
+        # Put the CA chain into each CertificateRequest so Secrets get ca.crt (trust-manager reads it).
+        caRootChainPopulation: true
+        checkApproval: true
+crd:
+  approver:
+    # cert-manager's built-in approver approves Firefly requests.
+    subject:
+      kind: ServiceAccount
+      namespace: cert-manager
+      name: cert-manager

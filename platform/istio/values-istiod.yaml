@@ -5,7 +5,13 @@ pilot:
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { memory: 512Mi }
+  # istio-csr (backed by Firefly) is the mesh CA, so istiod's own CA is off.
+  # istiod picks up its serving cert from Secret istiod-tls, which istio-csr creates.
+  env:
+    ENABLE_CA_SERVER: "false"
 global:
+  # Sidecars and gateways send CSRs to istio-csr instead of istiod.
+  caAddress: cert-manager-istio-csr.cert-manager.svc:443
   proxy:
     resources:
       requests: { cpu: 10m, memory: 40Mi }
