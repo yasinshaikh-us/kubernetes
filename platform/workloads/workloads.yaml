@@ -1,0 +1,76 @@
+# Internal test workloads: two httpbin pods in "workloads" and two workspace pods in "workspaces".
+# Both namespaces are in the mesh with STRICT mTLS, so every call uses Firefly-issued certificates.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workloads
+  labels: { istio-injection: enabled }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workspaces
+  labels: { istio-injection: enabled }
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: { name: default, namespace: workloads }
+spec: { mtls: { mode: STRICT } }
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: { name: default, namespace: workspaces }
+spec: { mtls: { mode: STRICT } }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: httpbin, namespace: workloads }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: httpbin, namespace: workloads, labels: { app: httpbin } }
+spec:
+  selector: { app: httpbin }
+  ports: [{ name: http, port: 8000, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: httpbin, namespace: workloads }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: httpbin } }
+  template:
+    metadata: { labels: { app: httpbin } }
+    spec:
+      serviceAccountName: httpbin
+      containers:
+        - name: httpbin
+          image: mccutchen/go-httpbin:2.25.0
+          ports: [{ containerPort: 8080 }]
+          resources: { requests: { cpu: 10m, memory: 16Mi } }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: workspace, namespace: workspaces }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: workspace, namespace: workspaces }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: workspace } }
+  template:
+    metadata: { labels: { app: workspace } }
+    spec:
+      serviceAccountName: workspace
+      containers:
+        - name: workspace
+          image: curlimages/curl:8.16.0
+          command: ["sleep", "infinity"]
+          resources: { requests: { cpu: 10m, memory: 16Mi } }
+          volumeMounts:
+            # Trust bundle distributed by trust-manager.
+            - { name: trust-bundle, mountPath: /etc/trust, readOnly: true }
+      volumes:
+        - name: trust-bundle
+          configMap: { name: workload-trust-bundle }

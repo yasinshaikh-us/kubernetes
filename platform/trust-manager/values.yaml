@@ -1,0 +1,6 @@
+# trust namespace is cert-manager: Bundle sources (Secrets/ConfigMaps) are read from there.
+app:
+  trust:
+    namespace: cert-manager
+resources:
+  requests: { cpu: 10m, memory: 32Mi }

@@ -1,0 +1,19 @@
+# Dev mode: Firefly mints its own in-memory CA and uses the policies below.
+# Used when no Venafi (Certificate Manager SaaS) credentials are provided.
+# Keep replicaCount 1: each replica would get its own CA, and a restart creates a new one.
+deployment:
+  config:
+    bootstrap:
+      selfSigned:
+        enabled: true
+        csr:
+          commonName: firefly-dev-ca
+    # Dev mode policies may not restrict subject or SANs; the Venafi-hosted policy should.
+    policies:
+      - name: istio-mesh
+        validityPeriod: P1D
+        keyUsages: [digitalSignature, keyEncipherment]
+        extendedKeyUsages: [SERVER_AUTH, CLIENT_AUTH]
+        keyAlgorithm:
+          allowedValues: [EC_P256, RSA_2048]
+          defaultValue: EC_P256

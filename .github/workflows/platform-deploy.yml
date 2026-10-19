@@ -1,6 +1,7 @@
 name: Platform deploy
 
-# Creates (or reuses) a small Civo cluster, deploys platform/ (Istio, cert-manager, nginx, Headlamp)
+# Creates (or reuses) a small Civo cluster, deploys platform/ (Istio, cert-manager, istio-csr, Firefly,
+# trust-manager, test workloads, nginx, Headlamp)
 # and runs the smoke tests. The nightly cleanup workflow deletes the cluster.
 on:
   workflow_dispatch:
@@ -41,6 +42,10 @@ jobs:
       ISSUER: ${{ inputs.issuer || 'letsencrypt-prod' }}
       DOMAIN: ${{ inputs.domain || vars.PLATFORM_DOMAIN }}
       RESERVED_IP: ${{ vars.CIVO_RESERVED_IP }}
+      SIZE: g4s.kube.medium
+      # Optional. Without them Firefly runs in self-signed dev mode.
+      VENAFI_CLIENT_ID: ${{ secrets.VENAFI_CLIENT_ID }}
+      VENAFI_PRIVATE_KEY: ${{ secrets.VENAFI_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v4
@@ -61,6 +66,8 @@ jobs:
           kubectl get pods -A -o wide || true
           kubectl get svc -A | grep -i loadbalancer || true
           kubectl get certificate,certificaterequest,challenge -A || true
+          kubectl -n venafi logs deploy/firefly --tail=50 || true
+          kubectl -n cert-manager logs deploy/cert-manager-istio-csr --tail=50 || true
           kubectl top nodes || true
 
       - name: Encrypted Headlamp token

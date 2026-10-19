@@ -1,0 +1,27 @@
+# istio-csr replaces istiod's built-in CA: istio-agents send CSRs here, and istio-csr turns them into
+# cert-manager CertificateRequests signed by Firefly.
+app:
+  certmanager:
+    namespace: istio-system
+    # Kept so the tests can inspect what Firefly signed.
+    preserveCertificateRequests: true
+    additionalAnnotations:
+      - name: firefly.venafi.com/policy-name
+        value: istio-mesh
+    issuer:
+      group: firefly.venafi.com
+      kind: Issuer
+      name: firefly
+  tls:
+    rootCAFile: /var/run/secrets/istio-csr/ca.crt
+  server:
+    maxCertificateDuration: 24h
+volumes:
+  - name: root-ca
+    configMap: { name: workload-trust-bundle }
+volumeMounts:
+  - name: root-ca
+    mountPath: /var/run/secrets/istio-csr
+    readOnly: true
+resources:
+  requests: { cpu: 10m, memory: 32Mi }

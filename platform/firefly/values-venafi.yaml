@@ -1,0 +1,11 @@
+# Bootstraps from Venafi / CyberArk Certificate Manager SaaS. The service account's private key
+# is in Secret venafi/venafi-credentials (key svc-acct.key); the client ID is passed with --set.
+# Policies, validity and the issuing sub-CA come from the Firefly configuration in the SaaS console.
+deployment:
+  replicaCount: 2
+  config:
+    bootstrap:
+      vaas:
+        enabled: true
+        url: https://api.venafi.cloud
+        credentialsSecretName: venafi-credentials

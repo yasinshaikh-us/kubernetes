@@ -1,0 +1,11 @@
+# Distributes the Firefly CA to every namespace as ConfigMap "workload-trust-bundle" (key ca.crt).
+# istio-csr reads its root of trust from the copy in cert-manager; workloads can mount it to verify peers.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: workload-trust-bundle
+spec:
+  sources:
+    - secret: { name: firefly-ca, key: ca.crt }
+  target:
+    configMap: { key: ca.crt }
