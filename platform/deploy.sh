@@ -49,6 +49,9 @@ else
   echo "    bootstrap: self-signed dev mode (set VENAFI_CLIENT_ID and VENAFI_PRIVATE_KEY to use Venafi)"
   firefly_args+=(-f firefly/values-selfsigned.yaml)
 fi
+# The chart doesn't roll the pod when its ConfigMap changes; an env var holding the config hash does.
+config_hash=$(for a in "${firefly_args[@]}"; do if [ -f "$a" ]; then cat "$a"; else echo "$a"; fi; done | sha256sum | cut -c1-16)
+firefly_args+=(--set "deployment.extraEnv[0].name=CONFIG_HASH" --set-string "deployment.extraEnv[0].value=$config_hash")
 helm upgrade --install firefly oci://registry.venafi.cloud/public/venafi-images/helm/firefly -n venafi --version $FIREFLY_VERSION "${firefly_args[@]}" --wait
 kubectl apply -f firefly/ca-probe.yaml
 kubectl -n cert-manager wait certificate/firefly-ca --for=condition=Ready --timeout=120s
