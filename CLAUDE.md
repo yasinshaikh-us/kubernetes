@@ -8,4 +8,4 @@
 
 ## Repo contents
 
-- `.github/workflows/civo-cluster-cleanup.yml` deletes every Civo Kubernetes cluster in every region daily at 1:00 AM America/Los_Angeles. It uses the `CIVO_TOKEN` secret. A PR that changes this workflow runs it in dry-run mode.
+- `.github/workflows/civo-cluster-cleanup.yml` deletes every billable Civo resource except reserved IPs (clusters, instances, databases, object stores, orphaned load balancers, detached volumes) in every region, scheduled daily for 1:00 AM America/Los_Angeles (GitHub often starts it hours late). It uses the `CIVO_TOKEN` secret. A PR that changes this workflow runs it in dry-run mode.
