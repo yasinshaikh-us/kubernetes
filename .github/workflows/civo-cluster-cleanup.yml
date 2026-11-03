@@ -1,6 +1,8 @@
 name: Civo cluster cleanup
 
-# Deletes every Kubernetes cluster in every Civo region, plus orphaned cluster firewalls.
+# Deletes every billable Civo resource in every region: Kubernetes clusters, instances,
+# databases, object stores, orphaned load balancers and detached volumes, plus orphaned
+# cluster firewalls. Reserved IPs are kept on purpose (see platform/README.md).
 # Scheduled for 1:00 AM America/Los_Angeles. Cron is UTC, so both the PDT (08:00 UTC)
 # and PST (09:00 UTC) slots are scheduled. GitHub often starts scheduled runs hours
 # late, so a run proceeds whenever it is 1 AM or later local time; it only skips the
@@ -47,7 +49,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Delete all Kubernetes clusters
+      - name: Delete billable Civo resources
         if: steps.gate.outputs.run == 'true'
         run: |
           set -euo pipefail
@@ -62,7 +64,7 @@ jobs:
           regions=$(api "$API/regions" | jq -r '.[] | select(.features.kubernetes) | .code')
           echo "Regions: $(echo $regions)"
 
-          found=0; failed=0
+          found=0; failed=0; deleted_clusters=""
           for region in $regions; do
             page=1
             while :; do
@@ -77,6 +79,7 @@ jobs:
           while read -r region id name status; do
             [ -z "${id:-}" ] && continue
             found=$((found + 1))
+            deleted_clusters+=" $id"
             if [ "$DRY_RUN" = "true" ]; then
               echo "[dry-run] would delete $name ($id) in $region [status: $status]"
               continue
@@ -89,6 +92,46 @@ jobs:
               failed=$((failed + 1))
             fi
           done <<< "${ids:-}"
+
+          # Every other billable resource except reserved IPs.
+          norm='if type == "array" then . else (.items // []) end'
+          other=0
+          all_regions=$(api "$API/regions" | jq -r '.[].code')
+          # delete_each <label> <list path> <jq filter that prints "id name" per resource to delete>
+          delete_each() {
+            local label=$1 path=$2 filter=$3 sep='?' base=${2%%\?*} region resp rid rname out
+            [[ "$path" == *\?* ]] && sep='&'
+            for region in $all_regions; do
+              if ! resp=$(api "$API/$path${sep}region=$region" 2>&1); then
+                # Not every product exists in every region.
+                [[ "$resp" == *region_feature_not_supported* ]] && continue
+                echo "::warning::Could not list ${label}s in $region: $resp"
+                failed=$((failed + 1)); continue
+              fi
+              while read -r rid rname; do
+                [ -z "${rid:-}" ] && continue
+                if [ "$DRY_RUN" = "true" ]; then
+                  echo "[dry-run] would delete $label $rname ($rid) in $region"
+                elif out=$(api -X DELETE "$API/$base/$rid?region=$region" 2>&1); then
+                  echo "Deleted $label $rname ($rid) in $region"
+                else
+                  echo "::warning::Failed to delete $label $rname ($rid) in $region: $out"
+                  failed=$((failed + 1)); continue
+                fi
+                other=$((other + 1))
+              done < <(echo "$resp" | jq -r --arg skip "$deleted_clusters" "$norm | .[] | $filter")
+            done
+          }
+
+          delete_each instance "instances?per_page=100" '"\(.id) \(.hostname)"'
+          delete_each database "databases" '"\(.id) \(.name)"'
+          delete_each "object store" "objectstores" '"\(.id) \(.name)"'
+          # A deleted cluster's load balancer goes with it; anything else is orphaned.
+          delete_each "load balancer" "loadbalancers" \
+            'select((.cluster_id // "") as $c | $c == "" or ($skip | contains($c) | not)) | "\(.id) \(.name)"'
+          # Attached volumes are still in use or held by a cluster being torn down; a later run gets them.
+          delete_each volume "volumes" \
+            'select((.instance_id // "") == "" and (.status // "") != "attached") | "\(.id) \(.name)"'
 
           # Civo leaves each cluster's auto-created firewall behind. Remove unused ones
           # (clusters deleted in this run release theirs a few minutes later; the next run gets those).
@@ -109,12 +152,13 @@ jobs:
               | "\(.id) \(.name)"')
           done
 
-          echo "Clusters found: $found, failed deletions: $failed, orphaned firewalls deleted: $fw_deleted"
+          echo "Clusters found: $found, other resources deleted: $other, failures: $failed, orphaned firewalls deleted: $fw_deleted"
           {
             echo "### Civo cluster cleanup"
             echo "- Dry run: $DRY_RUN"
             echo "- Clusters found: $found"
-            echo "- Failed deletions: $failed"
+            echo "- Other resources deleted (instances, databases, object stores, load balancers, volumes): $other"
+            echo "- Failures: $failed"
             echo "- Orphaned firewalls deleted: $fw_deleted"
           } >> "$GITHUB_STEP_SUMMARY"
           [ "$failed" -eq 0 ]
