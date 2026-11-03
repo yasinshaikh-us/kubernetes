@@ -1,0 +1,87 @@
+name: Civo resource audit
+
+# Read-only inventory of every billable Civo resource in every region.
+# (Civo's v2 API has no snapshot listing endpoint, so snapshots are not covered.)
+# Only GET requests are made; nothing is created, changed or deleted.
+# Results go to the job log and the run's step summary.
+on:
+  workflow_dispatch:
+  # PRs touching this workflow run it so the change can be validated.
+  pull_request:
+    paths:
+      - .github/workflows/civo-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CIVO_TOKEN: ${{ secrets.CIVO_TOKEN }}
+      API: https://api.civo.com/v2
+    steps:
+      - name: List Civo resources
+        run: |
+          set -euo pipefail
+          if [ -z "${CIVO_TOKEN:-}" ]; then
+            echo "::error::CIVO_TOKEN secret is not set"; exit 1
+          fi
+
+          get() {
+            curl -sS --fail-with-body --retry 3 -H "Authorization: Bearer $CIVO_TOKEN" "$1"
+          }
+
+          # Endpoints return either a bare array or a paginated {items: [...]} object.
+          norm='if type == "array" then . else (.items // []) end'
+
+          # name | path (region appended) | jq expression producing one line per item
+          resources=(
+            "Kubernetes clusters|kubernetes/clusters?per_page=100|\"\(.name) [\(.status)] nodes=\(([.pools[]?.count] | add) // .num_target_nodes // \"?\") size=\(.target_nodes_size // ([.pools[]?.size] | join(\",\")))\""
+            "Instances|instances?per_page=100|\"\(.hostname) [\(.status)] size=\(.size) ip=\(.public_ip // \"-\")\""
+            "Volumes|volumes|\"\(.name) \(.size_gb)GB [\(.status)] cluster=\(.cluster_id // \"-\") instance=\(.instance_id // \"-\")\""
+            "Load balancers|loadbalancers|\"\(.name) [\(.state // .status // \"?\")] ip=\(.public_ip // \"-\") cluster=\(.cluster_id // \"-\")\""
+            "Reserved IPs|ips|\"\(.name // \"-\") \(.ip) assigned_to=\((.assigned_to.name // .assigned_to.id) // \"UNASSIGNED\")\""
+            "Databases|databases|\"\(.name) [\(.status)] \(.software // .engine // \"\") size=\(.size)\""
+            "Object stores|objectstores|\"\(.name) \(.max_size // .max_size_gb // \"?\")GB [\(.status)]\""
+            "Firewalls|firewalls|\"\(.name) clusters=\(.cluster_count) instances=\(.instance_count) lbs=\(.load_balancer_count // 0)\""
+          )
+
+          regions=$(get "$API/regions" | jq -r '.[].code')
+          echo "Regions: $(echo $regions)"
+
+          summary="### Civo resource audit\n\n| Region | Resource | Count | Details |\n|---|---|---|---|\n"
+          total=0; errors=0
+          for region in $regions; do
+            for entry in "${resources[@]}"; do
+              IFS='|' read -r label path expr <<< "$entry"
+              sep='?'; [[ "$path" == *\?* ]] && sep='&'
+              if ! resp=$(get "$API/$path${sep}region=$region" 2>&1); then
+                # Not every product exists in every region; that is not a failure.
+                [[ "$resp" == *region_feature_not_supported* ]] && continue
+                echo "::warning::$label in $region: request failed: $resp"
+                errors=$((errors + 1)); continue
+              fi
+              if ! lines=$(echo "$resp" | jq -r "$norm | .[] | $expr" 2>&1); then
+                echo "::warning::$label in $region: unexpected response: $(echo "$resp" | head -c 300)"
+                errors=$((errors + 1)); continue
+              fi
+              count=$(echo "$resp" | jq "$norm | length")
+              [ "$count" -eq 0 ] && continue
+              total=$((total + count))
+              echo "== $region / $label: $count"
+              echo "$lines" | sed 's/^/   /'
+              details=$(echo "$lines" | sed 's/|/\\|/g' | paste -sd ';' | sed 's/;/<br>/g')
+              summary+="| $region | $label | $count | $details |\n"
+            done
+          done
+
+          echo "Resources found: $total, failed lookups: $errors"
+          {
+            printf '%b' "$summary"
+            echo
+            echo "Resources found: $total. Failed lookups: $errors."
+            echo
+            echo "Default networks are free and not listed; firewalls are listed but not billed."
+          } >> "$GITHUB_STEP_SUMMARY"

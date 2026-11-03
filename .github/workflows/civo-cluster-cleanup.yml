@@ -2,8 +2,10 @@ name: Civo cluster cleanup
 
 # Deletes every Kubernetes cluster in every Civo region, plus orphaned cluster firewalls.
 # Scheduled for 1:00 AM America/Los_Angeles. Cron is UTC, so both the PDT (08:00 UTC)
-# and PST (09:00 UTC) slots are scheduled and the job only proceeds in the one that
-# is actually 1 AM local time.
+# and PST (09:00 UTC) slots are scheduled. GitHub often starts scheduled runs hours
+# late, so a run proceeds whenever it is 1 AM or later local time; it only skips the
+# 08:00 UTC slot in winter when that lands before 1 AM (midnight PST). A second run
+# on the same day is harmless: it finds nothing left to delete.
 on:
   schedule:
     - cron: "0 8 * * *"
@@ -38,8 +40,8 @@ jobs:
       - name: Check local time
         id: gate
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/Los_Angeles date +%H)" != "01" ]; then
-            echo "Not 1 AM in Seattle (DST slot mismatch); skipping."
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=America/Los_Angeles date +%H)" = "00" ]; then
+            echo "Before 1 AM in Seattle (PST, early slot); skipping."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
