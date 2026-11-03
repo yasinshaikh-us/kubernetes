@@ -1,6 +1,7 @@
 name: Civo resource audit
 
 # Read-only inventory of every billable Civo resource in every region.
+# (Civo's v2 API has no snapshot listing endpoint, so snapshots are not covered.)
 # Only GET requests are made; nothing is created, changed or deleted.
 # Results go to the job log and the run's step summary.
 on:
@@ -45,8 +46,6 @@ jobs:
             "Databases|databases|\"\(.name) [\(.status)] \(.software // .engine // \"\") size=\(.size)\""
             "Object stores|objectstores|\"\(.name) \(.max_size // .max_size_gb // \"?\")GB [\(.status)]\""
             "Firewalls|firewalls|\"\(.name) clusters=\(.cluster_count) instances=\(.instance_count) lbs=\(.load_balancer_count // 0)\""
-            "Snapshots|snapshots|\"\(.name) [\(.state // .status // \"?\")]\""
-            "Volume snapshots|volumesnapshots|\"\(.name) [\(.state // .status // \"?\")]\""
           )
 
           regions=$(get "$API/regions" | jq -r '.[].code')
@@ -59,6 +58,8 @@ jobs:
               IFS='|' read -r label path expr <<< "$entry"
               sep='?'; [[ "$path" == *\?* ]] && sep='&'
               if ! resp=$(get "$API/$path${sep}region=$region" 2>&1); then
+                # Not every product exists in every region; that is not a failure.
+                [[ "$resp" == *region_feature_not_supported* ]] && continue
                 echo "::warning::$label in $region: request failed: $resp"
                 errors=$((errors + 1)); continue
               fi
